@@ -8,3 +8,4 @@ logs/
 .env
 *.pyc
 logs_sim.txt
+dbt/.user.yml
