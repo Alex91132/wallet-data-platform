@@ -1,0 +1,105 @@
+# Локальный стенд: OLTP → CDC → поток событий → аналитическое хранилище.
+#   docker compose up -d            — поднять всё
+#   docker compose run --rm sim     — сгенерировать историю (см. app/wallet/sim.py)
+# Пароли — только для локального запуска.
+name: wallet
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=4", "-c", "max_replication_slots=4",
+              "-c", "shared_preload_libraries=pg_stat_statements", "-c", "track_io_timing=on"]
+    environment:
+      POSTGRES_DB: wallet
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_local
+      TZ: Europe/Moscow
+    ports: ["5433:5432"]
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wallet"]
+      interval: 5s
+      retries: 20
+
+  redpanda:
+    image: redpandadata/redpanda:v25.1.9
+    command:
+      - redpanda start
+      - --mode dev-container
+      - --smp 1
+      - --memory 1G
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+    ports: ["19092:19092", "18082:18082", "19644:9644"]
+    volumes: [rpdata:/var/lib/redpanda/data]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      retries: 30
+
+  connect:
+    image: quay.io/debezium/connect:3.2.0.Final
+    depends_on:
+      postgres: {condition: service_healthy}
+      redpanda: {condition: service_healthy}
+    environment:
+      BOOTSTRAP_SERVERS: redpanda:9092
+      GROUP_ID: wallet-connect
+      CONFIG_STORAGE_TOPIC: _connect_configs
+      OFFSET_STORAGE_TOPIC: _connect_offsets
+      STATUS_STORAGE_TOPIC: _connect_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      HEAP_OPTS: "-Xms256m -Xmx768m"
+    ports: ["8083:8083"]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8-alpine
+    depends_on:
+      redpanda: {condition: service_healthy}
+    environment:
+      CLICKHOUSE_DB: dwh
+      CLICKHOUSE_USER: dwh
+      CLICKHOUSE_PASSWORD: dwh_local
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      TZ: Europe/Moscow
+    ports: ["8123:8123", "9000:9000"]
+    ulimits: {nofile: {soft: 262144, hard: 262144}}
+    volumes:
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+      - chdata:/var/lib/clickhouse
+
+  api:
+    build: ./app
+    depends_on:
+      postgres: {condition: service_healthy}
+      redpanda: {condition: service_healthy}
+    environment:
+      PG_DSN: postgresql://wallet_app:app_local@postgres:5432/wallet
+      KAFKA_BOOTSTRAP: redpanda:9092
+    ports: ["8000:8000"]
+    command: ["uvicorn", "wallet.api:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  sim:
+    build: ./app
+    profiles: [tools]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      PG_DSN: postgresql://postgres:postgres_local@postgres:5432/wallet
+      COLLECTOR_URL: http://api:8000
+    command: ["python", "-m", "wallet.sim"]
+
+volumes:
+  pgdata:
+  rpdata:
+  chdata:
