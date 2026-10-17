@@ -1,0 +1,24 @@
+name: wallet
+version: "1.0.0"
+config-version: 2
+profile: wallet
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: target
+clean-targets: [target, dbt_packages]
+
+vars:
+  tz: Europe/Moscow
+  late_lookback_hours: 72    # сколько часов назад перепроверять сессии из-за поздно пришедших событий
+
+models:
+  wallet:
+    +schema: analytics
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table

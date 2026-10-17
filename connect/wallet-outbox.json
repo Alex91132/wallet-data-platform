@@ -1,0 +1,30 @@
+{
+  "name": "wallet-outbox",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "debezium",
+    "database.password": "dbz_local",
+    "database.dbname": "wallet",
+    "topic.prefix": "pgoutbox",
+    "plugin.name": "pgoutput",
+    "publication.name": "dwh_cdc",
+    "publication.autocreate.mode": "disabled",
+    "slot.name": "outbox",
+    "table.include.list": "wallet.outbox",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "false",
+    "transforms": "outbox",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "transforms.outbox.table.field.event.id": "event_id",
+    "transforms.outbox.table.field.event.key": "aggregate_id",
+    "transforms.outbox.table.field.event.payload": "payload",
+    "transforms.outbox.table.fields.additional.placement": "event_type:envelope:event_type,created_at:envelope:created_at,event_id:envelope:event_id",
+    "transforms.outbox.route.by.field": "aggregate_type",
+    "transforms.outbox.route.topic.replacement": "domain.${routedByValue}",
+    "transforms.outbox.table.expand.json.payload": "true",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false"
+  }
+}

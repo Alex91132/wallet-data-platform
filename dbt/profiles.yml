@@ -1,0 +1,14 @@
+# Локальный стенд (docker compose). Пароль — только для локального запуска.
+wallet:
+  target: local
+  outputs:
+    local:
+      type: clickhouse
+      host: "{{ env_var('CH_HOST', 'localhost') }}"
+      port: 8123
+      user: dwh
+      password: "{{ env_var('CH_PASSWORD', 'dwh_local') }}"
+      schema: analytics
+      threads: 4
+      custom_settings:
+        join_use_nulls: 1          # LEFT JOIN без совпадения даёт NULL, а не 0 / 1970-01-01

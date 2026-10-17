@@ -1,0 +1,26 @@
+{
+  "name": "wallet-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "debezium",
+    "database.password": "dbz_local",
+    "database.dbname": "wallet",
+    "topic.prefix": "pg",
+    "plugin.name": "pgoutput",
+    "publication.name": "dwh_cdc",
+    "publication.autocreate.mode": "disabled",
+    "slot.name": "dwh_cdc",
+    "table.include.list": "wallet.users,wallet.kyc_checks,wallet.accounts,wallet.merchants,wallet.operations,wallet.ledger_entries,wallet.experiments,wallet.experiment_assignments",
+    "column.exclude.list": "wallet.users.phone,wallet.users.email,wallet.users.full_name,wallet.users.birth_date",
+    "decimal.handling.mode": "string",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "false",
+    "heartbeat.interval.ms": "10000",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.add.fields": "op,source.ts_ms,source.lsn",
+    "transforms.unwrap.delete.tombstone.handling.mode": "rewrite"
+  }
+}

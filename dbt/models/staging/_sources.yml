@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: raw
+    database: raw
+    schema: raw
+    description: Бронзовый слой — то, что ClickHouse прочитал из Kafka (Redpanda) без бизнес-логики.
+    loaded_at_field: ingested_at
+    freshness:
+      warn_after: {count: 30, period: minute}
+      error_after: {count: 6, period: hour}
+    tables:
+      - name: cdc_log
+        description: Журнал изменений таблиц OLTP (Debezium, pgoutput). Каждая версия строки — отдельная запись; ПДн исключены на источнике.
+        columns:
+          - name: source_table
+          - name: key
+            description: Первичный ключ строки (JSON)
+          - name: lsn
+            description: Позиция изменения в WAL — порядок версий одной строки
+      - name: app_events
+        description: События приложения, прошедшие контракт (contracts/app_event.schema.json) — все доставки, включая повторы SDK.
+        loaded_at_field: ingested_at
+      - name: app_events_dlq
+        description: События, нарушившие контракт, с причиной.
+        freshness: null
+      - name: domain_events
+        description: Доменные события сервиса из transactional outbox.

@@ -7,3 +7,4 @@ dbt/dbt_packages/
 logs/
 .env
 *.pyc
+logs_sim.txt

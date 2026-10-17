@@ -1,0 +1,69 @@
+version: 2
+
+models:
+  - name: fct_operations
+    description: Денежные операции в финальном статусе — одна строка на операцию.
+    columns:
+      - name: op_id
+        data_tests: [unique, not_null]
+      - name: kind
+        data_tests:
+          - accepted_values: {arguments: {values: [topup, p2p, purchase, refund, cashback, withdrawal]}}
+      - name: status
+        data_tests:
+          - accepted_values: {arguments: {values: [succeeded, failed, reversed]}}
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_users'), field: user_id}}
+      - name: failure_reason
+        description: Причина отказа; заполнена только у failed.
+
+  - name: dim_users
+    description: Пользователь — атрибуты (без ПДн), когорта, группа эксперимента, вехи активации.
+    columns:
+      - name: user_id
+        data_tests: [unique, not_null]
+      - name: channel
+        data_tests:
+          - accepted_values: {arguments: {values: [organic, referral, ads_social, ads_search, partner]}}
+
+  - name: dim_users_scd2
+    description: История уровня KYC и статуса (SCD2), построенная из журнала CDC.
+    columns:
+      - name: user_id
+        data_tests: [not_null]
+
+  - name: mart_finance_daily
+    description: GMV, выручка (комиссии), кешбэк и чистая выручка по дням — по проводкам.
+    columns:
+      - name: day
+        data_tests: [unique, not_null]
+
+  - name: mart_activation_funnel
+    description: Воронка онбординга (30 дней) по неделе регистрации и каналу.
+  - name: mart_kyc_form_funnel
+    description: Пошаговая воронка формы KYC по версиям формы.
+  - name: mart_retention_weekly
+    description: Транзакционное удержание недельных когорт.
+  - name: mart_engagement_daily
+    description: DAU, WAU, MAU и липкость.
+  - name: mart_experiment_cashback
+    description: Метрики участников A/B cashback_boost (первые 30 дней и дни 31–60).
+    columns:
+      - name: user_id
+        data_tests: [unique, not_null]
+      - name: variant
+        data_tests:
+          - accepted_values: {arguments: {values: [control, test]}}
+  - name: mart_ops_health_hourly
+    description: Доля технических отказов по часам и типам операций.
+  - name: mart_fraud_signals
+    description: Признаки схемы «дроп» по пользователям; flagged — сработало правило.
+  - name: mart_data_quality_daily
+    description: Дубли, опоздавшие события и нарушения контракта по дням.
+  - name: fct_sessions
+    description: Сессии приложения (инкрементально, с перепроверкой поздних событий).
+    columns:
+      - name: session_id
+        data_tests: [unique, not_null]

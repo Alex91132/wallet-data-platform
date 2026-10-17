@@ -1,0 +1,7 @@
+<clickhouse>
+    <!-- читать топики с начала: хранилище восстанавливается из Kafka целиком -->
+    <kafka>
+        <auto_offset_reset>earliest</auto_offset_reset>
+    </kafka>
+    <timezone>Europe/Moscow</timezone>
+</clickhouse>
