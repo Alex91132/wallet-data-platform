@@ -15,7 +15,9 @@ bursts as (
     select t.user_id, t.topup_at, any(t.topup_amount) as topup_amount,
            count()                                                         as transfers_2h,
            uniqExact(p.counterparty_user_id)                               as recipients_2h,
-           round(countIf(p.amount % 1000 = 0) / count(), 3)                as round_share,
+           -- кратность 1000 — в целых копейках: у Decimal оператор % работает с внутренним масштабированным
+           -- значением, и 4018.00 % 1000 даёт 8, а «круглыми» оказались бы все суммы, кратные 10
+           round(countIf(toInt64(p.amount * 100) % 100000 = 0) / count(), 3) as round_share,
            round(countIf(p.recipient_signup > p.created_at - interval 14 day) / count(), 3) as fresh_recipient_share,
            sum(p.amount)                                                   as outflow_2h
     from topups t
@@ -31,4 +33,4 @@ select
     max_transfers_2h >= 5 and max_recipients_2h >= 5 and max_round_share >= 0.8 and max_fresh_share >= 0.5 as flagged
 from bursts
 group by user_id
-having max(transfers_2h) >= 3
+having max(transfers_2h) >= 1      -- фон для сравнения: все, кто переводил в первые 2 часа после пополнения

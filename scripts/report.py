@@ -36,7 +36,7 @@ def q(sql: str) -> pd.DataFrame:
 
 
 def fmt(x, d=0) -> str:
-    return f"{x:,.{d}f}".replace(",", " ").replace(".", ",")
+    return f"{x:,.{d}f}".replace(",", " ").replace(".", ",").replace("-", "−")
 
 
 def pct(x, d=1) -> str:
@@ -89,20 +89,24 @@ f1.add_scatter(x=fin.m, y=fin.net / 1e3, name="чистая выручка", mod
 layout(f1, "Выручка и расход на кешбэк по месяцам", y="тыс. ₽").update_layout(barmode="relative")
 take = float(kpi.fees / kpi.gmv)
 cb_share = float(kpi.cashback / kpi.fees)
+neg = fin[fin.net < 0]
+MONTHS_RU = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"]
+neg_txt = (" В " + " и ".join(MONTHS_RU[pd.Timestamp(m).month - 1] for m in neg.m) +
+           " чистая выручка уходила в минус — это месяцы эксперимента с кешбэком 3 % (раздел 4)." if len(neg) else "")
 section("Деньги",
         f"За {fmt((pd.Timestamp(kpi.d1) - pd.Timestamp(kpi.d0)).days + 1)} дней {fmt(kpi.users)} регистраций, "
         f"{fmt(kpi.payers)} хотя бы раз заплатили. Оборот покупок — {fmt(kpi.gmv / 1e6, 1)} млн ₽, комиссия мерчантов "
         f"(take rate) — {pct(take, 2)}. <b>Кешбэк съедает {pct(cb_share, 0)} комиссионного дохода</b>: при take rate "
-        f"около 1,4 % базовый кешбэк 1 % оставляет тонкую маржу — это рамка для решения по эксперименту ниже.",
+        f"{pct(take, 1)} базовый кешбэк 1 % оставляет тонкую маржу.{neg_txt}",
         [f1])
 
 # ---------------------------------------------------------------- 1. каналы и рекламная кампания
 fun = q("""select channel, sum(signed_up) s, sum(kyc_submitted) k, sum(kyc_approved) a, sum(topped_up) t, sum(purchased) p
            from analytics.mart_activation_funnel group by channel order by s desc""")
 f2 = go.Figure()
-for stage, col, name in [("s", 1, "регистрация"), ("k", 1, "заявка KYC"), ("a", 1, "KYC одобрен"),
-                         ("t", 1, "пополнил"), ("p", 1, "купил")]:
-    f2.add_bar(x=[CH_RU[c] for c in fun.channel], y=fun[stage] / fun.s, name=name)
+for stage, col, name in [("k", "#bfdbfe", "подал KYC"), ("a", "#93c5fd", "KYC одобрен"),
+                         ("t", "#3b82f6", "пополнил"), ("p", "#1d4ed8", "купил")]:
+    f2.add_bar(x=[CH_RU[c] for c in fun.channel], y=fun[stage] / fun.s, name=name, marker_color=col)
 layout(f2, "Воронка онбординга за 30 дней по каналам (доля от регистраций)").update_layout(yaxis_tickformat=".0%")
 weekly = q("""select signup_week w, channel, sum(signed_up) s, sum(purchased) p
               from analytics.mart_activation_funnel group by w, channel order by w""")
@@ -114,14 +118,22 @@ layout(f3, "Регистрации по неделям и каналам", y="п
 act = fun.set_index("channel")
 social, organic = act.loc["ads_social"], act.loc["organic"]
 facts["activation"] = {c: float(act.loc[c].p / act.loc[c].s) for c in act.index}
+# кампания: недели, когда регистраций из соцсетей в 1,6+ раза больше обычного (медианы)
+soc = weekly[weekly.channel == "ads_social"].set_index("w")
+camp_weeks = soc[soc.s > 1.6 * soc.s.median()].index
+camp = soc.loc[camp_weeks]
+extra_signups = float(camp.s.sum() - soc.s.median() * len(camp))
+extra_payers = float(camp.p.sum() - (soc.p / soc.s).median() * soc.s.median() * len(camp))
+facts["campaign"] = {"weeks": [str(w) for w in camp_weeks], "extra_signups": extra_signups, "extra_payers": extra_payers}
 section("Каналы и рекламная кампания",
         f"Реклама в соцсетях даёт много регистраций, но до первой покупки за 30 дней доходят "
         f"<b>{pct(social.p / social.s, 0)}</b> против {pct(organic.p / organic.s, 0)} у органики и "
         f"{pct(act.loc['referral'].p / act.loc['referral'].s, 0)} у рефералов. Провал — на KYC: заявку подают "
         f"{pct(social.k / social.s, 0)} пришедших из соцсетей против {pct(organic.k / organic.s, 0)}. "
-        f"Всплеск регистраций на неделях кампании (апрель) почти не добавил платящих клиентов: "
-        f"бюджет стоит переносить в рефералы, а кампанию в соцсетях — оценивать по стоимости активированного, "
-        f"а не зарегистрированного клиента.",
+        f"Кампания в соцсетях ({len(camp_weeks)} нед. с {pd.Timestamp(camp_weeks.min()):%d.%m}) сверх обычного уровня "
+        f"принесла около {fmt(extra_signups)} регистраций, но лишь около {fmt(extra_payers)} платящих клиентов: "
+        f"кампанию стоит оценивать по стоимости активированного, а не зарегистрированного клиента, "
+        f"а бюджет — сравнивать с реферальной программой.",
         [f2, f3])
 
 # ---------------------------------------------------------------- 2. форма KYC v2
@@ -132,16 +144,20 @@ for v, col in [("v1", C["grey"]), ("v2", C["main"])]:
     r = kyc.loc[v]
     f4.add_scatter(x=["начали", "паспорт", "селфи", "адрес", "отправили"], y=[1, r.p / r.st, r.s / r.st, r.a / r.st, r.subm / r.st],
                    name=f"форма {v}", mode="lines+markers", line=dict(color=col, width=3))
-layout(f4, "Доходимость шагов формы KYC").update_layout(yaxis_tickformat=".0%", hovermode="x")
+layout(f4, "Доходимость шагов формы KYC (доля начавших)").update_layout(yaxis_tickformat=".0%", hovermode="x",
+                                                                       yaxis_range=[0, 1.04])
 p1, l1, h1 = prop_ci(int(kyc.loc["v1"].subm), int(kyc.loc["v1"].st))
 p2, l2, h2 = prop_ci(int(kyc.loc["v2"].subm), int(kyc.loc["v2"].st))
 sel1 = kyc.loc["v1"].s / kyc.loc["v1"].p
 sel2 = kyc.loc["v2"].s / kyc.loc["v2"].p
+pas1, pas2 = kyc.loc["v1"].p / kyc.loc["v1"].st, kyc.loc["v2"].p / kyc.loc["v2"].st
+adr1, adr2 = kyc.loc["v1"].a / kyc.loc["v1"].s, kyc.loc["v2"].a / kyc.loc["v2"].s
 facts["kyc_form"] = {"v1": p1, "v2": p2, "v1_ci": [l1, h1], "v2_ci": [l2, h2], "selfie_v1": float(sel1), "selfie_v2": float(sel2)}
 section("Новая форма KYC (версия 3.2.0)",
         f"Форму отправляют {pct(p1, 0)} начавших в старой версии (95 % ДИ {pct(l1, 0)}–{pct(h1, 0)}) и "
         f"<b>{pct(p2, 0)} в новой</b> ({pct(l2, 0)}–{pct(h2, 0)}). Весь выигрыш — на шаге «селфи»: его проходят "
-        f"{pct(sel1, 0)} дошедших до него в v1 и {pct(sel2, 0)} в v2, остальные шаги не изменились. "
+        f"{pct(sel1, 0)} дошедших до него в v1 и {pct(sel2, 0)} в v2; паспорт ({pct(pas1, 0)} → {pct(pas2, 0)}) "
+        f"и адрес ({pct(adr1, 0)} → {pct(adr2, 0)}) почти не изменились. "
         f"Оговорка: это сравнение «до и после», а не A/B — в тот же период менялся и состав трафика. "
         f"Но эффект локализован ровно в изменённом шаге, поэтому объяснение «форма помогла» здесь убедительное.",
         [f4])
@@ -181,12 +197,18 @@ for metric, name in [("purchases_30d", "покупок за 30 дней"), ("gmv
 abt = pd.DataFrame(res, columns=["metric", "control", "test", "delta", "lo", "hi", "rel"])
 facts["experiment"] = abt.to_dict("records")
 n_c, n_t = (ab.variant == "control").sum(), (ab.variant == "test").sum()
+beh = abt[abt.metric.isin(["покупок за 30 дней", "оборот за 30 дней, ₽", "дней с покупками на днях 31–60"])]
 f6 = go.Figure()
-f6.add_bar(x=abt.metric, y=abt.rel, error_y=dict(type="data", symmetric=False,
-                                                 array=(abt.hi - abt.delta) / abt.control, arrayminus=(abt.delta - abt.lo) / abt.control),
-           marker_color=[C["good"] if v > 0 else C["bad"] for v in abt.rel])
-layout(f6, "Эффект кешбэка 3 % против 1 % (test − control, 95 % бутстреп-интервал)").update_layout(
+f6.add_bar(x=beh.metric, y=beh.rel, error_y=dict(type="data", symmetric=False,
+                                                 array=(beh.hi - beh.delta) / beh.control, arrayminus=(beh.delta - beh.lo) / beh.control),
+           marker_color=[C["good"] if lo > 0 else C["grey"] for lo in beh.lo])
+layout(f6, "Поведение: эффект кешбэка 3 % (test к control, 95 % бутстреп-интервал)").update_layout(
     yaxis_tickformat=".0%", hovermode="x", showlegend=False)
+econ = ab.groupby("variant")[["fee_30d", "cashback_30d", "net_30d"]].mean().astype(float)
+f6b = go.Figure()
+for var, col in [("control", C["grey"]), ("test", C["main"])]:
+    f6b.add_bar(x=["комиссии с покупок", "кешбэк", "комиссии − кешбэк"], y=econ.loc[var].to_numpy(), name=var, marker_color=col)
+layout(f6b, "Экономика: рубли на одного участника за первые 30 дней", y="₽").update_layout(hovermode="x")
 row = abt.set_index("metric")
 tbl = "<table><tr><th>метрика</th><th>control</th><th>test</th><th>разница</th><th>95 % ДИ</th></tr>" + "".join(
     f"<tr><td>{r.metric}</td><td>{fmt(r.control, 2)}</td><td>{fmt(r.test, 2)}</td><td>{fmt(r.delta, 2)} ({pct(r.rel, 1)})</td>"
@@ -195,12 +217,13 @@ net = row.loc["комиссии − кешбэк, ₽"]
 section("A/B-тест: кешбэк 3 % первые 30 дней",
         f"{fmt(n_c)} новичков в контроле и {fmt(n_t)} в тесте (проверка SRM в dbt пройдена). "
         f"Повышенный кешбэк <b>увеличил число покупок на {pct(row.loc['покупок за 30 дней'].rel, 0)}</b> и оборот на "
-        f"{pct(row.loc['оборот за 30 дней, ₽'].rel, 0)}, но кешбэк вырос втрое, и экономика ушла в минус: "
+        f"{pct(row.loc['оборот за 30 дней, ₽'].rel, 0)} (интервалы близко к нулю, но выше него), а кешбэк вырос в "
+        f"{fmt(row.loc['кешбэк за 30 дней, ₽'].test / row.loc['кешбэк за 30 дней, ₽'].control, 1)} раза, и экономика ушла в минус: "
         f"«комиссии минус кешбэк» на клиента — {fmt(net.control, 1)} ₽ в контроле и {fmt(net.test, 1)} ₽ в тесте "
         f"(разница {fmt(net.delta, 1)} ₽, ДИ {fmt(net.lo, 1)} … {fmt(net.hi, 1)}). После окончания акции "
         f"(дни 31–60) активность групп не различается — привычки кешбэк не сформировал. "
         f"<b>Решение: не раскатывать.</b> Если цель — активация, дешевле дать разовый бонус за первую покупку.",
-        [f6], tbl)
+        [f6, f6b], tbl)
 
 # ---------------------------------------------------------------- 5. сбой провайдера
 inc = q("""select hour, sum(attempts) att, sum(technical_failed) tf from analytics.mart_ops_health_hourly
@@ -228,11 +251,14 @@ flag = fr[fr.flagged == 1]
 users_f = q(f"""select channel, toDate(signup_at) d from analytics.dim_users
                 where user_id in ({','.join(map(str, flag.user_id)) or '0'})""")
 f8 = go.Figure()
-f8.add_scatter(x=fr.max_transfers_2h, y=fr.max_round_share, mode="markers",
-               marker=dict(size=8, color=[C["bad"] if f else C["grey"] for f in fr.flagged], opacity=0.8),
+jit = rng.uniform(-0.18, 0.18, len(fr))
+f8.add_scatter(x=fr.max_transfers_2h + jit, y=fr.max_round_share, mode="markers",
+               marker=dict(size=7, color=[C["bad"] if f else C["grey"] for f in fr.flagged], opacity=0.6),
                text=fr.user_id, hovertemplate="user %{text}<br>переводов за 2 ч: %{x}<br>круглые суммы: %{y:.0%}<extra></extra>")
 layout(f8, "Переводы за 2 часа после пополнения: сработавшее правило — красным").update_layout(
-    xaxis_title="переводов за 2 часа после пополнения", yaxis_tickformat=".0%", yaxis_title="доля круглых сумм", hovermode="closest")
+    xaxis_title="переводов за 2 часа после пополнения", yaxis_tickformat=".0%", yaxis_title="доля круглых сумм",
+    yaxis_range=[-0.05, 1.08], hovermode="closest", showlegend=False)
+normal = fr[fr.flagged == 0]
 facts["fraud"] = {"flagged": int(len(flag)), "outflow": float(flag.max_outflow_2h.sum()),
                   "channels": users_f.channel.value_counts().to_dict()}
 section("Антифрод: схема «дроп»",
@@ -240,16 +266,21 @@ section("Антифрод: схема «дроп»",
         f"получателям, почти все круглыми суммами, получатели — свежие кошельки. Через них ушло "
         f"{fmt(flag.max_outflow_2h.sum() / 1e3)} тыс. ₽. Все пришли из рекламы в соцсетях и зарегистрировались "
         f"в одно окно ({users_f.d.min():%d.%m}–{users_f.d.max():%d.%m}) — признак организованной группы. "
-        f"У обычных клиентов несколько переводов подряд бывают, но не круглыми суммами незнакомцам.", [f8])
+        f"Для сравнения: у остальных {fmt(len(normal))} клиентов, переводивших в первые 2 часа после пополнения, "
+        f"медиана — {fmt(normal.max_transfers_2h.median())} перевод, больше трёх — "
+        + (f"у {fmt((normal.max_transfers_2h > 3).sum())}" if (normal.max_transfers_2h > 3).any() else "ни у кого") + ".", [f8])
 
 # ---------------------------------------------------------------- 7. вовлечённость и качество данных
 eng = q("select * from analytics.mart_engagement_daily order by day")
 f9 = go.Figure()
-f9.add_scatter(x=eng.day, y=eng.dau, name="DAU", line=dict(color=C["main"]))
-f9.add_scatter(x=eng.day, y=eng.mau, name="MAU (28 дней)", line=dict(color=C["grey"]))
-f9.add_scatter(x=eng.day, y=eng.stickiness, name="DAU/MAU", yaxis="y2", line=dict(color=C["alt"], dash="dot"))
-layout(f9, "Аудитория приложения", y="пользователей").update_layout(
-    yaxis2=dict(overlaying="y", side="right", tickformat=".0%", showgrid=False))
+f9.add_scatter(x=eng.day, y=eng.dau, name="DAU", line=dict(color=C["main"], width=2))
+f9.add_scatter(x=eng.day, y=eng.wau, name="WAU", line=dict(color="#60a5fa", width=2))
+f9.add_scatter(x=eng.day, y=eng.mau, name="MAU (28 дней)", line=dict(color=C["grey"], width=2))
+layout(f9, "Аудитория приложения", y="пользователей", h=320)
+f9b = go.Figure(go.Scatter(x=eng.day, y=eng.stickiness.rolling(7).mean(), line=dict(color=C["alt"], width=2.5), name="DAU/MAU"))
+layout(f9b, "Липкость DAU/MAU (скользящее среднее за 7 дней)", h=260).update_layout(yaxis_tickformat=".0%", showlegend=False)
+DLQ_RU = {"unknown_field": "лишнее поле", "bad_app_version": "версия приложения не X.Y.Z", "invalid_amount": "сумма ≤ 0",
+          "missing_session_id": "нет session_id", "missing_user_id": "нет user_id", "other": "прочее"}
 dq = q("""select sum(raw_events) raw, sum(duplicates) dup, sum(late_events) late, sum(unique_events) uniq,
                  sum(dlq_events) dlq from analytics.mart_data_quality_daily""").iloc[0]
 dlq_types = q("select error_type, count() c from analytics.stg_app_events_dlq group by 1 order by c desc")
@@ -260,19 +291,20 @@ section("Вовлечённость и качество данных",
         f"{pct(dq.dup / dq.raw, 1)} событий — повторные отправки (схлопываются по event_id), "
         f"{pct(dq.late / dq.uniq, 1)} приходят позже часа (офлайн), "
         f"{pct(dq.dlq / (dq.raw + dq.dlq), 1)} нарушают контракт и уходят в DLQ — "
-        + ", ".join(f"{k}: {v}" for k, v in dlq_types.set_index('error_type').c.items()) +
-        ". Поздние события не теряются: сессии пересчитываются по времени приёма, а не по времени события.", [f9])
+        + ", ".join(f"{DLQ_RU.get(k, k)} — {fmt(v)}" for k, v in dlq_types.set_index('error_type').c.items()) +
+        ". Поздние события не теряются: сессии пересчитываются по времени приёма, а не по времени события.", [f9, f9b])
 
 # ---------------------------------------------------------------- HTML
 body = []
 for i, (title, text, figs, table) in enumerate(sections):
-    charts = "".join(f'<div class="chart">{f.to_html(full_html=False, include_plotlyjs=False, config={"displaylogo": False})}</div>'
+    charts = "".join(f'<div class="chart">{f.to_html(full_html=False, include_plotlyjs=False, config={"displaylogo": False, "locale": "ru"})}</div>'
                      for f in figs)
     body.append(f'<section><h2>{i}. {title}</h2><p>{text}</p>{charts}{table}</section>')
 
 html = f"""<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Кошелёк: аналитика</title>
 <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/plotly.js@2.35.2/dist/plotly-locale-ru.js"></script>
 <style>
  body {{ font: 16px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; color: {INK}; max-width: 1040px; margin: 0 auto; padding: 24px 16px 60px; background: #fff; }}
  h1 {{ font-size: 30px; margin-bottom: 4px; }} h2 {{ font-size: 21px; margin-top: 40px; border-top: 1px solid {GRID}; padding-top: 24px; }}
