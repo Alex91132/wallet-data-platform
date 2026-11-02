@@ -319,6 +319,18 @@ html = f"""<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name
 <code>scripts/report.py</code>. Код и архитектура — <a href="https://github.com/Alex91132/wallet-data-platform">GitHub</a>.</p>
 {''.join(body)}
 </body></html>"""
+def _git_sha() -> str | None:
+    """Короткий хеш коммита, на котором собран снимок (None, если git недоступен)."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() or None
+    except Exception:
+        return None
+
+
+facts["build"] = {"built_at": dt.datetime.now().isoformat(timespec="seconds"), "git_sha": _git_sha()}
 (ROOT / "docs").mkdir(exist_ok=True)
 (ROOT / "docs" / "index.html").write_text(html, encoding="utf-8")
 (ROOT / "docs" / "report.json").write_text(json.dumps(facts, ensure_ascii=False, indent=2, default=float), encoding="utf-8")
