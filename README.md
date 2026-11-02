@@ -142,6 +142,20 @@ FastAPI · Python · pytest · Plotly · Docker Compose. Данные синте
 
 Нужны Docker и Python 3.12.
 
+**Одна команда** — стек, симуляция, dbt, сверка и отчёт (~45 минут, из них 40 — симуляция):
+
+```bash
+python -m venv .venv && .venv/Scripts/pip install -r app/requirements.txt dbt-clickhouse clickhouse-connect pandas numpy plotly pytest
+.venv/Scripts/python scripts/run_all.py all          # Linux/macOS: .venv/bin/python
+```
+
+То же через `make all`, если `make` установлен. Отдельные шаги — `up`, `seed`, `staging`, `reconcile`,
+`build`, `report`, `test`, `down`: у каждого в [`scripts/run_all.py`](scripts/run_all.py) проверяется
+предусловие (Docker, dbt) и печатается оценка времени, чтобы прогон не падал «command not found»
+на середине.
+
+**Вручную, по шагам** — если нужен контроль на каждом этапе:
+
 ```bash
 docker compose up -d --build                      # PostgreSQL, Redpanda, Debezium, ClickHouse, API
 python -m venv .venv && .venv/Scripts/pip install -r app/requirements.txt dbt-clickhouse clickhouse-connect pandas numpy plotly pytest
@@ -166,5 +180,5 @@ API с интерактивной документацией — http://localhos
 | `clickhouse/init/` | приём из Kafka: журнал CDC, события, DLQ, доменные события |
 | `dbt/` | staging, SCD2, витрины, тесты |
 | `tests/` | конкурентность и инварианты OLTP |
-| `scripts/` | регистрация коннекторов, сверка, отчёт |
+| `scripts/` | регистрация коннекторов, сверка, отчёт, `run_all.py` — вход одной командой |
 | `docs/` | документы системного аналитика, трекинг, метрики, отчёт |
